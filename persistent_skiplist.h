@@ -50,19 +50,20 @@ public:
 	using atomic_slnode_pptr = std::atomic<slnode_pptr>;
 
 	template <typename K, typename M>
-	slnode_t(K &&key, M &&obj, uint8_t height) {
+	slnode_t(K &&key, M &&obj, uint8_t height): _ref(1) {
 		assert(pmemobj_tx_stage() == TX_STAGE_WORK);
 		assert(height > 0);
 		try {
 			_height = height;
 			pointer x = new (&_entry) value_type(std::forward<K>(key), std::forward<M>(obj));
+			assert(x == &_entry);
 			_nexts = make_persistent<atomic_slnode_pptr[]>(height);
 		} catch (transaction_error &e) {
 			std::terminate();
 		}
 	}
 
-	slnode_t(uint8_t height) { // for head & tail
+	slnode_t(uint8_t height): _ref(1) { // for head & tail
 		assert(pmemobj_tx_stage() == TX_STAGE_WORK);
 		try {
 			_height = height;
@@ -130,12 +131,21 @@ public:
 		_nexts[lv].store(node, std::memory_order_relaxed);
 	}
 
+	void pin() {
+		_ref++;
+	}
+
+	void unpin() {
+		_ref--;
+	}
+
 private:
 	union {
 		value_type _entry;
 	};
 	persistent_ptr<atomic_slnode_pptr[]> _nexts;
 	p<uint8_t> _height;
+	std::atomic<uint16_t> _ref;
 };
 
 template <typename NodeType, bool is_const>
@@ -229,7 +239,7 @@ public:
 	using const_iterator = persistent_skiplist_iterator<slnode_type, true>;
 
 	persistent_skiplist_base() : 
-		_random(std::chrono::system_clock::now().time_since_epoch().count()) {
+		_random((unsigned long)std::chrono::system_clock::now().time_since_epoch().count()) {
 		assert(pmemobj_tx_stage() == TX_STAGE_WORK);
 		_head.store(allocate_node(Height), std::memory_order_relaxed);
 		auto tail = allocate_node(0);
