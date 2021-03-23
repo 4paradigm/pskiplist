@@ -1,6 +1,5 @@
-//
-// Created by robin on 10/29/2019.
-//
+// SPDX-License-Identifier: BSD-3-Clause
+/* Copyright 2021, 4Paradigm Inc. */
 
 #pragma once
 
