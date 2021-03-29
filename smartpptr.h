@@ -52,11 +52,11 @@ public:
     offset_type getOffset(void) {
         return (val & ~mask);
     }
-    T * getVptr() {
-        return (val == 0) ? nullptr : (T *) (((offset_type) pmemobj_pool_by_ptr(this) + val ) & ~mask);
+    T * getVptr(PMEMobjpool * pool) {
+        return (val == 0) ? nullptr : (T *) (((offset_type) pool + val ) & ~mask);
     }
-    persistent_ptr<T> getPptr() {
-        return persistent_ptr<T>(PMEMoid{pmemobj_oid(this).pool_uuid_lo, val & ~mask});
+    persistent_ptr<T> getPptr(uint64_t pool_uuid) {
+        return persistent_ptr<T>(PMEMoid{pool_uuid, val & ~mask});
     }
 
     bool isDelete(void)  { return (val & kDeleteFlag); }

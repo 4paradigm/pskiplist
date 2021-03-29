@@ -19,6 +19,8 @@
 
 #include "smartpptr.h"
 
+#include <iostream>
+
 namespace pmem
 {
 namespace kv
@@ -51,25 +53,34 @@ public:
 
 	template <typename K, typename M>
 	slnode_t(K &&key, M &&obj, uint8_t height): _ref(1) {
+		std::cout << "[YJ]:slnode_t()1:Enter" << std::endl;
 		assert(pmemobj_tx_stage() == TX_STAGE_WORK);
 		assert(height > 0);
 		try {
 			_height = height;
+			std::cout << "[YJ]:slnode_t()1:_height = " << unsigned(height) << std::endl;
 			pointer x = new (&_entry) value_type(std::forward<K>(key), std::forward<M>(obj));
 			assert(x == &_entry);
+			std::cout << "[YJ]:slnode_t()1:_entry = " << (void*)(&_entry) << " : first = " << _entry.first.data() << ",second = " << _entry.second.data() << std::endl;
 			_nexts = make_persistent<atomic_slnode_pptr[]>(height);
+			std::cout << "[YJ]:slnode_t()1:_nexts = " << _nexts.get() << std::endl;
 		} catch (transaction_error &e) {
 			std::terminate();
 		}
 	}
 
 	slnode_t(uint8_t height): _ref(1) { // for head & tail
+		std::cout << "[YJ]:slnode_t()2:Enter" << std::endl;
 		assert(pmemobj_tx_stage() == TX_STAGE_WORK);
 		try {
 			_height = height;
-			if (height > 0)
+			std::cout << "[YJ]:slnode_t()2:_height = " << unsigned(height) << std::endl;
+			if (height > 0) {
 				_nexts = make_persistent<atomic_slnode_pptr[]>(height);
+				std::cout << "[YJ]:slnode_t()2:_nexts = " << _nexts.get() << std::endl;
+			}
 		} catch (transaction_error &e) {
+			std::cout << "[YJ]:slnode_t()2:transaction_error";
 			std::terminate();
 		}
 	}
@@ -107,7 +118,7 @@ public:
 	}
 
 	slnode_ptr get_next_ptr(level_type lv) {
-		return get_next_pptr(lv).getVptr();
+		return get_next_pptr(lv).getVptr(pmemobj_pool_by_oid(pmemobj_oid(this)));
 	}
 	slnode_pptr get_next_pptr(level_type lv) {
 		auto expected = _nexts[lv].load(std::memory_order_relaxed);
@@ -128,6 +139,7 @@ public:
 
 	void set_next_pptr(level_type lv, const slnode_pptr &node) {
 		assert(lv < _height && lv >= 0);
+		std::cout << "[YJ]:set_next_pptr:lv = " << unsigned(lv) << ", pptr = " << (void*)(&node) << std::endl;
 		_nexts[lv].store(node, std::memory_order_relaxed);
 	}
 
@@ -208,7 +220,7 @@ public:
 
 	pointer operator->() const
 	{
-		return &**this;
+		return &(_current_node->getValue());
 	}
 };
 
@@ -240,11 +252,15 @@ public:
 
 	persistent_skiplist_base() : 
 		_random((unsigned long)std::chrono::system_clock::now().time_since_epoch().count()) {
+		std::cout << "[YJ]:persistent_skiplist_base():Enter" << std::endl;
 		assert(pmemobj_tx_stage() == TX_STAGE_WORK);
 		_head.store(allocate_node(Height), std::memory_order_relaxed);
-		auto tail = allocate_node(0);
+		std::cout << "[YJ]:persistent_skiplist_base():_head = " << _head.load().getOffset() << std::endl;
+		_tail = allocate_node(0);
+		std::cout << "[YJ]:persistent_skiplist_base():_tail = " << _tail.getOffset() << std::endl;
 		for (uint8_t i = 0;i < Height;i++) {
-			_head.load(std::memory_order_relaxed).getVptr()->set_next_pptr(i, tail);
+			std::cout << "[YJ]:persistent_skiplist_base():_head.load().getVptr() = " << (void*)(_head.load().getVptr(get_objpool())) << std::endl;
+			_head.load().getVptr(get_objpool())->set_next_pptr(i, _tail);
 		}
 		_size = 0;
 	}
@@ -255,6 +271,7 @@ public:
 
 	template <typename K, typename M>
 	std::pair<iterator, bool> try_emplace(K &&key, M &&obj) {
+		std::cout << "[YJ]:try_emplace():Enter" << std::endl;
 		std::vector<node_ptr> pre(Height);
 		std::pair<node_ptr, bool> res = find_less_or_equal(key, pre);
 		if (res.second) { //key found
@@ -266,8 +283,10 @@ public:
 
 	template <typename K>
 	iterator find(const K &key) {
+		std::cout << "[YJ]:find():Enter" << std::endl;
 		std::vector<node_ptr> pre(Height);
 		std::pair<node_ptr, bool> res = find_less_or_equal(key, pre);
+		std::cout << "[YJ]:find():result {node=" << (void*)res.first << ",found=" << res.second << "}" << std::endl;
 		return res.second ? 
 				iterator(res.first) :
 				end();
@@ -275,8 +294,10 @@ public:
 
 	template <typename K>
 	const_iterator find(const K &key) const {
+		std::cout << "[YJ]:const_find():Enter" << std::endl;
 		std::vector<node_ptr> pre(Height);
 		std::pair<node_ptr, bool> res = find_less_or_equal(key, pre);
+		std::cout << "[YJ]:const_find():result {node=" << (void*)res.first << ",found=" << res.second << "}" << std::endl;
 		return res.second ? 
 				const_iterator(res.first) :
 				cend();
@@ -317,7 +338,7 @@ public:
 		std::pair<node_ptr, bool> res = find_less_or_equal(key, pre);
 		node_ptr next = res.first->get_next_ptr(0);
 		while (!next->isTail()) {
-			if (_compare(next->getKey(), key) > 0)
+			if (_compare(key, next->getKey()))
 				return iterator(next);
 			next = next->get_next_ptr(0);
 		}
@@ -330,7 +351,7 @@ public:
 		std::pair<node_ptr, bool> res = find_less_or_equal(key, pre);
 		node_ptr next = res.first->get_next_ptr(0);
 		while (!next->isTail()) {
-			if (_compare(next->getKey(), key) > 0)
+			if (_compare(key, next->getKey()))
 				return const_iterator(next);
 			next = next->get_next_ptr(0);
 		}
@@ -339,6 +360,7 @@ public:
 
 	template <typename K>
 	size_type erase(const K &key) {
+		std::cout << "[YJ]:erase():Enter" << std::endl;
 		std::vector<node_ptr> pre(Height);
 		std::pair<node_ptr, bool> res = find_less_or_equal(key, pre);
 		if (res.second) { //key found
@@ -349,16 +371,16 @@ public:
 	}
 	
 	iterator begin() {
-		return iterator(_head.load(std::memory_order_relaxed).getVptr());
+		return iterator(_head.load(std::memory_order_relaxed).getVptr(get_objpool())->get_next_ptr(0));
 	}
 	iterator end() {
-		return iterator(nullptr);
+		return iterator(_tail.getVptr(get_objpool()));
 	}
 	const_iterator begin() const {
-		return const_iterator(_head.load(std::memory_order_relaxed).getVptr());
+		return const_iterator(_head.load(std::memory_order_relaxed).getVptr(get_objpool())->get_next_ptr(0));
 	}
 	const_iterator end() const {
-		return const_iterator(nullptr);
+		return const_iterator(_tail.getVptr(get_objpool()));
 	}
 	const_iterator cbegin() const {
 		return begin();
@@ -370,11 +392,11 @@ public:
 	/* method */
 
 	size_type size() const noexcept {
-		return _size;
+		return _size.get_ro();
 	}
 
 	reference operator[](size_type pos) {
-		node_ptr temp = _head.load(std::memory_order_relaxed).getVptr()->get_next_ptr(0);
+		node_ptr temp = _head.load(std::memory_order_relaxed).getVptr(get_objpool())->get_next_ptr(0);
 		while (!temp->isTail()) {
 			if (pos == 0)
 				return temp->getValue();
@@ -385,7 +407,7 @@ public:
 	}
 
 	const_reference operator[](size_type pos) const {
-		node_ptr temp = _head.load(std::memory_order_relaxed).getVptr()->get_next_ptr(0);
+		node_ptr temp = _head.load(std::memory_order_relaxed).getVptr(get_objpool())->get_next_ptr(0);
 		while (!temp->isTail()) {
 			if (pos == 0)
 				return temp->getValue();
@@ -404,6 +426,7 @@ public:
 
 private:
 	atomic_node_pptr _head;
+	node_pptr _tail;
 	key_compare _compare;
 	std::mt19937_64 _random;
 	pmem::obj::p<size_type> _size;
@@ -412,14 +435,17 @@ private:
 	template <typename... Args>
 	inline node_pptr allocate_node(Args &&... args) {
 		auto pptr = make_persistent<slnode_type>(std::forward<Args>(args)...);
+		std::cout << "[YJ]:allocate_node(): vptr=" << (void*)pptr.get() << ", " \
+				<< "pmemobj_oid={" << pmemobj_oid(pptr.get()).pool_uuid_lo << "," << pmemobj_oid(pptr.get()).off << "} " << std::endl;
 		return node_pptr(pptr.raw().off);
 	}
 
 	inline void deallocate(node_pptr node) {
-		assert(node.getVptr() != nullptr);
+		std::cout << "[YJ]:deallocate():Enter" << std::endl;
+		assert(node.getVptr(get_objpool()) != nullptr);
 		pool_base pop = get_pool_base();
 		pmem::obj::transaction::run(pop, [&] {
-			delete_persistent<slnode_type>(node.getPptr());
+			delete_persistent<slnode_type>(node.getPptr(get_pool_uuid()));
 			// node = nullptr;
 		});
 	}
@@ -434,22 +460,39 @@ private:
 	}
 
 	template <typename K>
-	std::pair<node_ptr, bool> find_less_or_equal(const K &key, std::vector<node_ptr> &pre) const
+	std::pair<node_ptr, bool> find_less_or_equal(const K &key, std::vector<node_ptr> &pre) 
 	{
-		std::pair<node_ptr, bool> result(nullptr, false);
+		std::cout << "[YJ]:find_less_or_equal():Enter" << std::endl;
 
-		node_ptr node = _head.load().getVptr();
-		uint8_t level = Height;
+		node_ptr head = _head.load().getVptr(get_objpool());
+		node_ptr node = head;
+		std::cout << "[YJ]:find_less_or_equal():head = " << (void*)head << std::endl;
+		uint8_t level = Height - 1;
 		while (true) {
 			node_ptr next = node->get_next_ptr(level);
+			std::cout << "[YJ]:find_less_or_equal():next[" << unsigned(level) << "]=" << (void*)next << std::endl;
 			if (is_after_node(key, next)) {
+				std::cout << "[YJ]:find_less_or_equal():is_after_node = TRUE" << std::endl;
 				node = next;
 			} else {
+				std::cout << "[YJ]:find_less_or_equal():is_after_node = FALSE" << std::endl;
 				pre[level] = node;
 				if (level == 0) {
-					return (_compare(key, node->getKey()) == 0) ?
+					if (next->isTail()) {
+						std::cout << "[YJ]:find_less_or_equal():x key=" << key.data() << ", next= tail" << std::endl;
+						return ((node != head) && (!_compare(key, node->getKey()) && !_compare(node->getKey(), key))) ?
 							std::pair<node_ptr, bool>(node, true) :
 							std::pair<node_ptr, bool>(node, false);
+					}
+					else if (!_compare(key, next->getKey()) && !_compare(next->getKey(), key)) {
+						std::cout << "[YJ]:find_less_or_equal():y key=" << key.data() << ", next=" << (void*)next << "->key=" << next->getKey().data() << std::endl;
+						return std::pair<node_ptr, bool>(next, true);
+					} else {
+						std::cout << "[YJ]:find_less_or_equal():z key=" << key.data() << ", node=" << (void*)node << std::endl;
+						return ((node != head) && (!_compare(key, node->getKey()) && !_compare(node->getKey(), key))) ?
+							std::pair<node_ptr, bool>(node, true) :
+							std::pair<node_ptr, bool>(node, false);
+					}
 				}
 				level--;
 			}
@@ -458,30 +501,38 @@ private:
 
 	template <typename K, typename M>
 	std::pair<iterator, bool> internal_insert(std::vector<node_ptr> &pre, K &&key, M &&obj) {
+		std::cout << "[YJ]:internal_insert():Enter" << std::endl;
 		auto pop = get_pool_base();
 
 		node_pptr newNode;
 		uint8_t height = random_height();
-
+		std::cout << "[YJ]:internal_insert():random_height=" << unsigned(height) << std::endl;
 		pmem::obj::transaction::run(pop, [&] {
 			newNode = allocate_node(std::forward<K>(key), std::forward<M>(obj), height);
 		});
-		for (uint8_t i = 0; i < height; i++) {
-			newNode.getVptr()->set_next_pptr(i, pre[i]->get_next_pptr(i));
+		for (auto i = 0; i < height; i++) {
+			std::cout << "[YJ]:internal_insert():pre[" << unsigned(i) << "]=" << (void*)(pre[i]) << ", ->next_pptr=" << pre[i]->get_next_pptr(i).getOffset() << std::endl;
+			newNode.getVptr(get_objpool())->set_next_pptr(i, pre[i]->get_next_pptr(i));
+			std::cout << "[YJ]:internal_insert():set newNode->next_pptr[" << unsigned(i) << "]=" << newNode.getVptr(get_objpool())->get_next_pptr(i).getOffset() << std::endl;
 			pre[i]->set_next_pptr(i, newNode);
+			std::cout << "[YJ]:internal_insert():pre[" << unsigned(i) << "]=" << (void*)(pre[i]) << ", ->next_pptr=" << pre[i]->get_next_pptr(i).getOffset() << std::endl;
 		}
-		++_size;
-		return std::pair<iterator, bool>(iterator(newNode.getVptr()), true);
+		_size++;
+		return std::pair<iterator, bool>(iterator(newNode.getVptr(get_objpool())), true);
 	}
 
 	size_type internal_erase(std::vector<node_ptr> &pre, node_ptr node) {
+		std::cout << "[YJ]:internal_erase():Enter" << std::endl;
 		auto pop = get_pool_base();
 		auto target = pre[0]->get_next_pptr(0);
-		for (uint8_t i = node->height();i>=0 ;i--) {
+		std::cout << "[YJ]:internal_erase():pre[0]=" << (void*)pre[0] << ", ->next_pptr=" << pre[0]->get_next_pptr(0).getOffset() << std::endl;
+		for (auto i = node->height()-1; i >= 0; i--) {
+			std::cout << "[YJ]:internal_erase():pre[" << unsigned(i) << "]=" << (void*)(pre[i]) << ", ->next_pptr=" << pre[0]->get_next_pptr(i).getOffset() << std::endl;
 			pre[i]->set_next_pptr(i, node->get_next_pptr(i));
+			std::cout << "[YJ]:internal_erase():set pre[" << unsigned(i) << "]=" << (void*)(pre[i]) << ", ->next_pptr=" << node->get_next_pptr(i).getOffset() << std::endl;
 		}
 		deallocate(target);
-		--_size;
+		_size--;
 		return 1;
 	}
 
@@ -500,7 +551,7 @@ private:
 	}
 	template <typename K>
 	bool is_after_node(const K& key, node_ptr node) const {
-        return (node != nullptr) && (_compare(key, node->getKey()) > 0);
+        return (!node->isTail()) && (_compare(node->getKey(), key));
     }
 };
 
@@ -529,6 +580,7 @@ public:
 
 	explicit persistent_skiplist() : base_type()
 	{
+		std::cout << "[YJ]:persistent_skiplist():Enter" << std::endl;
 	}
 
 	~persistent_skiplist()
