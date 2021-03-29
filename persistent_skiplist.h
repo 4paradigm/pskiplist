@@ -4,6 +4,8 @@
 #ifndef PERSISTENT_SKIPLIST
 #define PERSISTENT_SKIPLIST
 
+// #define DEBUG_LOG4P
+
 #include <libpmemobj++/detail/common.hpp>
 #include <libpmemobj++/detail/life.hpp>
 #include <libpmemobj++/make_persistent.hpp>
@@ -18,8 +20,6 @@
 #include <random>
 
 #include "smartpptr.h"
-
-#define DEBUG_LOG4P
 
 #include <iostream>
 
@@ -55,34 +55,32 @@ public:
 
 	template <typename K, typename M>
 	slnode_t(K &&key, M &&obj, uint8_t height): _ref(1) {
-		LOG4P_DEBUG("[YJ]:slnode_t()1:Enter");
 		assert(pmemobj_tx_stage() == TX_STAGE_WORK);
 		assert(height > 0);
 		try {
 			_height = height;
-			std::cout << "[YJ]:slnode_t()1:_height = " << unsigned(height) << std::endl;
+			LOG4P_DEBUG("_height = %u", unsigned(height));
 			pointer x = new (&_entry) value_type(std::forward<K>(key), std::forward<M>(obj));
 			assert(x == &_entry);
-			std::cout << "[YJ]:slnode_t()1:_entry = " << (void*)(&_entry) << " : first = " << _entry.first.data() << ",second = " << _entry.second.data() << std::endl;
+			LOG4P_DEBUG("_entry = %p : first = %s,second = %s", (void*)(&_entry), _entry.first.data(), _entry.second.data());
 			_nexts = make_persistent<atomic_slnode_pptr[]>(height);
-			std::cout << "[YJ]:slnode_t()1:_nexts = " << _nexts.get() << std::endl;
+			LOG4P_DEBUG("_nexts = %p", _nexts.get());
 		} catch (transaction_error &e) {
 			std::terminate();
 		}
 	}
 
 	slnode_t(uint8_t height): _ref(1) { // for head & tail
-		std::cout << "[YJ]:slnode_t()2:Enter" << std::endl;
 		assert(pmemobj_tx_stage() == TX_STAGE_WORK);
 		try {
 			_height = height;
-			std::cout << "[YJ]:slnode_t()2:_height = " << unsigned(height) << std::endl;
+			LOG4P_DEBUG("_height = %u", unsigned(height));
 			if (height > 0) {
 				_nexts = make_persistent<atomic_slnode_pptr[]>(height);
-				std::cout << "[YJ]:slnode_t()2:_nexts = " << _nexts.get() << std::endl;
+				LOG4P_DEBUG("_nexts = %p", _nexts.get());
 			}
 		} catch (transaction_error &e) {
-			std::cout << "[YJ]:slnode_t()2:transaction_error";
+			LOG4P_ERROR("transaction_error");
 			std::terminate();
 		}
 	}
@@ -141,7 +139,6 @@ public:
 
 	void set_next_pptr(level_type lv, const slnode_pptr &node) {
 		assert(lv < _height && lv >= 0);
-		std::cout << "[YJ]:set_next_pptr:lv = " << unsigned(lv) << ", pptr = " << (void*)(&node) << std::endl;
 		_nexts[lv].store(node, std::memory_order_relaxed);
 	}
 
@@ -254,15 +251,14 @@ public:
 
 	persistent_skiplist_base() : 
 		_random((unsigned long)std::chrono::system_clock::now().time_since_epoch().count()) {
-		std::cout << "[YJ]:persistent_skiplist_base():Enter" << std::endl;
 		assert(pmemobj_tx_stage() == TX_STAGE_WORK);
 		_head.store(allocate_node(Height), std::memory_order_relaxed);
-		std::cout << "[YJ]:persistent_skiplist_base():_head = " << _head.load().getOffset() << std::endl;
+		LOG4P_DEBUG("_head = %x", _head.load().getOffset());
 		_tail = allocate_node(0);
-		std::cout << "[YJ]:persistent_skiplist_base():_tail = " << _tail.getOffset() << std::endl;
+		LOG4P_DEBUG("_tail = %x", _tail.getOffset());
 		for (uint8_t i = 0;i < Height;i++) {
-			std::cout << "[YJ]:persistent_skiplist_base():_head.load().getVptr() = " << (void*)(_head.load().getVptr(get_objpool())) << std::endl;
 			_head.load().getVptr(get_objpool())->set_next_pptr(i, _tail);
+			LOG4P_DEBUG("_head->next_pptr[%d] = %x", i, _head.load().getVptr(get_objpool())->get_next_pptr(i).getOffset());
 		}
 		_size = 0;
 	}
@@ -273,22 +269,22 @@ public:
 
 	template <typename K, typename M>
 	std::pair<iterator, bool> try_emplace(K &&key, M &&obj) {
-		std::cout << "[YJ]:try_emplace():Enter" << std::endl;
 		std::vector<node_ptr> pre(Height);
 		std::pair<node_ptr, bool> res = find_less_or_equal(key, pre);
-		if (res.second) { //key found
+		if (res.second) { //key found {
+			LOG4P_DEBUG("key found");
 			return std::pair<iterator, bool>(iterator(res.first), false);
 		} else {
+			LOG4P_DEBUG("key NOT found");
 			return internal_insert(pre, std::forward<K>(key), std::forward<M>(obj));
 		}
 	}
 
 	template <typename K>
 	iterator find(const K &key) {
-		std::cout << "[YJ]:find():Enter" << std::endl;
 		std::vector<node_ptr> pre(Height);
 		std::pair<node_ptr, bool> res = find_less_or_equal(key, pre);
-		std::cout << "[YJ]:find():result {node=" << (void*)res.first << ",found=" << res.second << "}" << std::endl;
+		LOG4P_DEBUG("result {node=%p, found=%d}", (void*)res.first, res.second);
 		return res.second ? 
 				iterator(res.first) :
 				end();
@@ -296,10 +292,9 @@ public:
 
 	template <typename K>
 	const_iterator find(const K &key) const {
-		std::cout << "[YJ]:const_find():Enter" << std::endl;
 		std::vector<node_ptr> pre(Height);
 		std::pair<node_ptr, bool> res = find_less_or_equal(key, pre);
-		std::cout << "[YJ]:const_find():result {node=" << (void*)res.first << ",found=" << res.second << "}" << std::endl;
+		LOG4P_DEBUG("result {node=%p, found=%d}", (void*)res.first, res.second);
 		return res.second ? 
 				const_iterator(res.first) :
 				cend();
@@ -362,12 +357,13 @@ public:
 
 	template <typename K>
 	size_type erase(const K &key) {
-		std::cout << "[YJ]:erase():Enter" << std::endl;
 		std::vector<node_ptr> pre(Height);
 		std::pair<node_ptr, bool> res = find_less_or_equal(key, pre);
 		if (res.second) { //key found
+			LOG4P_DEBUG("key found");
 			return internal_erase(pre, res.first);
 		} else {
+			LOG4P_DEBUG("key NOT found");
 			return size_type(0);
 		}
 	}
@@ -437,14 +433,13 @@ private:
 	template <typename... Args>
 	inline node_pptr allocate_node(Args &&... args) {
 		auto pptr = make_persistent<slnode_type>(std::forward<Args>(args)...);
-		std::cout << "[YJ]:allocate_node(): vptr=" << (void*)pptr.get() << ", " \
-				<< "pmemobj_oid={" << pmemobj_oid(pptr.get()).pool_uuid_lo << "," << pmemobj_oid(pptr.get()).off << "} " << std::endl;
+		LOG4P_DEBUG("vptr=%p, pmemobj_oid={%llu,%llu}", (void*)pptr.get(), pmemobj_oid(pptr.get()).pool_uuid_lo, pmemobj_oid(pptr.get()).off);
 		return node_pptr(pptr.raw().off);
 	}
 
 	inline void deallocate(node_pptr node) {
-		std::cout << "[YJ]:deallocate():Enter" << std::endl;
 		assert(node.getVptr(get_objpool()) != nullptr);
+		LOG4P_DEBUG("vptr=%p", node.getVptr(get_objpool()));
 		pool_base pop = get_pool_base();
 		pmem::obj::transaction::run(pop, [&] {
 			delete_persistent<slnode_type>(node.getPptr(get_pool_uuid()));
@@ -464,33 +459,31 @@ private:
 	template <typename K>
 	std::pair<node_ptr, bool> find_less_or_equal(const K &key, std::vector<node_ptr> &pre) 
 	{
-		std::cout << "[YJ]:find_less_or_equal():Enter" << std::endl;
-
 		node_ptr head = _head.load().getVptr(get_objpool());
 		node_ptr node = head;
-		std::cout << "[YJ]:find_less_or_equal():head = " << (void*)head << std::endl;
+		LOG4P_DEBUG("head = %p", (void*)head);
 		uint8_t level = Height - 1;
 		while (true) {
 			node_ptr next = node->get_next_ptr(level);
-			std::cout << "[YJ]:find_less_or_equal():next[" << unsigned(level) << "]=" << (void*)next << std::endl;
+			LOG4P_DEBUG("head->next[%u]=%p", unsigned(level), (void*)next);
 			if (is_after_node(key, next)) {
-				std::cout << "[YJ]:find_less_or_equal():is_after_node = TRUE" << std::endl;
+				LOG4P_DEBUG("is_after_node returns TRUE");
 				node = next;
 			} else {
-				std::cout << "[YJ]:find_less_or_equal():is_after_node = FALSE" << std::endl;
+				LOG4P_DEBUG("is_after_node returns FALSE");
 				pre[level] = node;
 				if (level == 0) {
 					if (next->isTail()) {
-						std::cout << "[YJ]:find_less_or_equal():x key=" << key.data() << ", next= tail" << std::endl;
+						LOG4P_DEBUG("next->isTail=TURE, key=%s", key.data());
 						return ((node != head) && (!_compare(key, node->getKey()) && !_compare(node->getKey(), key))) ?
 							std::pair<node_ptr, bool>(node, true) :
 							std::pair<node_ptr, bool>(node, false);
 					}
 					else if (!_compare(key, next->getKey()) && !_compare(next->getKey(), key)) {
-						std::cout << "[YJ]:find_less_or_equal():y key=" << key.data() << ", next=" << (void*)next << "->key=" << next->getKey().data() << std::endl;
+						LOG4P_DEBUG("next is the target, key=%s, next=%p->key=", key.data(), (void*)next, next->getKey().data());
 						return std::pair<node_ptr, bool>(next, true);
 					} else {
-						std::cout << "[YJ]:find_less_or_equal():z key=" << key.data() << ", node=" << (void*)node << std::endl;
+						LOG4P_DEBUG("next is NOT the target, key=%s, node=%p", key.data(), (void*)node);
 						return ((node != head) && (!_compare(key, node->getKey()) && !_compare(node->getKey(), key))) ?
 							std::pair<node_ptr, bool>(node, true) :
 							std::pair<node_ptr, bool>(node, false);
@@ -503,35 +496,33 @@ private:
 
 	template <typename K, typename M>
 	std::pair<iterator, bool> internal_insert(std::vector<node_ptr> &pre, K &&key, M &&obj) {
-		std::cout << "[YJ]:internal_insert():Enter" << std::endl;
 		auto pop = get_pool_base();
 
 		node_pptr newNode;
 		uint8_t height = random_height();
-		std::cout << "[YJ]:internal_insert():random_height=" << unsigned(height) << std::endl;
+		LOG4P_DEBUG("random_height=%u", unsigned(height));
 		pmem::obj::transaction::run(pop, [&] {
 			newNode = allocate_node(std::forward<K>(key), std::forward<M>(obj), height);
 		});
-		for (auto i = 0; i < height; i++) {
-			std::cout << "[YJ]:internal_insert():pre[" << unsigned(i) << "]=" << (void*)(pre[i]) << ", ->next_pptr=" << pre[i]->get_next_pptr(i).getOffset() << std::endl;
+		for (uint64_t i = 0; i < height; i++) {
+			LOG4P_DEBUG("pre[%llu]=%p, ->next_pptr=%x", i, pre[i], pre[i]->get_next_pptr(i).getOffset());
 			newNode.getVptr(get_objpool())->set_next_pptr(i, pre[i]->get_next_pptr(i));
-			std::cout << "[YJ]:internal_insert():set newNode->next_pptr[" << unsigned(i) << "]=" << newNode.getVptr(get_objpool())->get_next_pptr(i).getOffset() << std::endl;
+			LOG4P_DEBUG("set newNode->next_pptr[%llu]=%x", i, newNode.getVptr(get_objpool())->get_next_pptr(i).getOffset());
 			pre[i]->set_next_pptr(i, newNode);
-			std::cout << "[YJ]:internal_insert():pre[" << unsigned(i) << "]=" << (void*)(pre[i]) << ", ->next_pptr=" << pre[i]->get_next_pptr(i).getOffset() << std::endl;
+			LOG4P_DEBUG("pre[%llu]=%p, ->next_pptr=%x", i, pre[i], pre[i]->get_next_pptr(i).getOffset());
 		}
 		_size++;
 		return std::pair<iterator, bool>(iterator(newNode.getVptr(get_objpool())), true);
 	}
 
 	size_type internal_erase(std::vector<node_ptr> &pre, node_ptr node) {
-		std::cout << "[YJ]:internal_erase():Enter" << std::endl;
 		auto pop = get_pool_base();
 		auto target = pre[0]->get_next_pptr(0);
-		std::cout << "[YJ]:internal_erase():pre[0]=" << (void*)pre[0] << ", ->next_pptr=" << pre[0]->get_next_pptr(0).getOffset() << std::endl;
-		for (auto i = node->height()-1; i >= 0; i--) {
-			std::cout << "[YJ]:internal_erase():pre[" << unsigned(i) << "]=" << (void*)(pre[i]) << ", ->next_pptr=" << pre[0]->get_next_pptr(i).getOffset() << std::endl;
-			pre[i]->set_next_pptr(i, node->get_next_pptr(i));
-			std::cout << "[YJ]:internal_erase():set pre[" << unsigned(i) << "]=" << (void*)(pre[i]) << ", ->next_pptr=" << node->get_next_pptr(i).getOffset() << std::endl;
+		LOG4P_DEBUG("target= pre[0]=%p, ->next_pptr[0]=%x", pre[0], target.getOffset());
+		for (int i = node->height()-1; i >= 0; i--) {
+			LOG4P_DEBUG("pre[%llu]=%p, ->next_pptr=%p", i, pre[unsigned(i)], pre[unsigned(i)]->get_next_pptr(i).getOffset());
+			pre[unsigned(i)]->set_next_pptr(i, node->get_next_pptr(i));
+			LOG4P_DEBUG("set pre[%llu]=%p, ->next_pptr=%x", i, pre[unsigned(i)], node->get_next_pptr(i).getOffset());
 		}
 		deallocate(target);
 		_size--;
@@ -582,7 +573,6 @@ public:
 
 	explicit persistent_skiplist() : base_type()
 	{
-		std::cout << "[YJ]:persistent_skiplist():Enter" << std::endl;
 	}
 
 	~persistent_skiplist()
