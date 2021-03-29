@@ -19,6 +19,8 @@
 
 #include "smartpptr.h"
 
+#define DEBUG_LOG4P
+
 #include <iostream>
 
 namespace pmem
@@ -53,7 +55,7 @@ public:
 
 	template <typename K, typename M>
 	slnode_t(K &&key, M &&obj, uint8_t height): _ref(1) {
-		std::cout << "[YJ]:slnode_t()1:Enter" << std::endl;
+		LOG4P_DEBUG("[YJ]:slnode_t()1:Enter");
 		assert(pmemobj_tx_stage() == TX_STAGE_WORK);
 		assert(height > 0);
 		try {

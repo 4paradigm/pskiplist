@@ -13,6 +13,8 @@
 #include <atomic>
 #include <cassert>
 
+#include "log4p.h"
+
 namespace fourpd
 {
 using pmem::obj::persistent_ptr;
