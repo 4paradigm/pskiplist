@@ -6,9 +6,9 @@ With the simplicity and good performance, skiplist is widely used in many scenar
 It is now being actively developed to support more data storage systems (e.g., PmemKV, RocksDB, Kafka and etc.) as the underlying core data structure.
 
 # Usage
-## A new storage engine in PmemKV
-Please checkout our forked [PmemKV](https://github.com/4paradigm/pmemkv) to find out [how to](https://github.com/4paradigm/pmemkv/blob/master/doc/ENGINES-experimental.md#pskiplist) use the persistent skiplist storage engine (ENGINE_PSKIPLIST) as the storage engine for PmemKV.
+## PmemStore - PmemKV with the new storage engine PSKIPLIST
+Please checkout our [PmemStore](https://github.com/4paradigm/pmemstore) to find out how to use the persistent skiplist storage engine (ENGINE_PSKIPLIST) as the storage engine for a persistent key-value store.
 
-Latest updates will be periodically merged to [Intel's PmemKV](https://github.com/pmem/pmemkv) to keep upstream.
+Latest updates will also be periodically merged to [Intel's PmemKV](https://github.com/pmem/pmemkv) to keep upstream.
 
 Stay tuned for the integration with more systems/applications.
